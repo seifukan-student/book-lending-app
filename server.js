@@ -5,6 +5,7 @@ const path = require('path');
 const axios = require('axios');
 const session = require('express-session');
 const rateLimit = require('express-rate-limit');
+const ipKeyGenerator = rateLimit.ipKeyGenerator;
 const crypto = require('crypto');
 const sharp = require('sharp');
 require('dotenv').config();
@@ -92,7 +93,7 @@ function buildAllowedOrigins() {
     ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
     : [];
   const vercelUrls = [];
-  for (const key of ['VERCEL_URL', 'VERCEL_BRANCH_URL']) {
+  for (const key of ['VERCEL_URL', 'VERCEL_BRANCH_URL', 'VERCEL_PROJECT_PRODUCTION_URL']) {
     const v = process.env[key];
     if (!v) continue;
     const host = v.replace(/^https?:\/\//i, '').split('/')[0];
@@ -101,20 +102,36 @@ function buildAllowedOrigins() {
   return [...new Set([...defaults, ...fromEnv, ...vercelUrls])];
 }
 const allowedOrigins = buildAllowedOrigins();
-console.log(`🌐 CORS: ${allowedOrigins.length} origin(s) allowed`);
+const isVercelRuntime = process.env.VERCEL === '1';
+
+function isHttpsVercelAppOrigin(origin) {
+  try {
+    const u = new URL(origin);
+    return u.protocol === 'https:' && (u.hostname.endsWith('.vercel.app') || u.hostname === 'vercel.app');
+  } catch {
+    return false;
+  }
+}
+
+function isCorsOriginAllowed(origin) {
+  if (allowedOrigins.includes(origin)) return true;
+  if (isVercelRuntime && isHttpsVercelAppOrigin(origin)) return true;
+  return false;
+}
+
+console.log(`🌐 CORS: ${allowedOrigins.length} explicit origin(s); Vercel *.vercel.app: ${isVercelRuntime ? 'on' : 'off'}`);
 
 app.use(cors({
   origin: function (origin, callback) {
-    // オリジンがない場合（同一オリジンリクエストやcurlなど）は開発環境のみ許可
+    // Origin なし: ローカル / 非本番は許可。Vercel 本番はアドレス直打ち等でも応答できるよう許可。
     if (!origin) {
-      if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV !== 'production') {
+      if (process.env.NODE_ENV !== 'production' || isVercelRuntime) {
         return callback(null, true);
-      } else {
-        return callback(new Error('CORS policy: Origin header is required'));
       }
+      return callback(new Error('CORS policy: Origin header is required'));
     }
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
+
+    if (isCorsOriginAllowed(origin)) {
       callback(null, true);
     } else {
       console.warn(`CORS blocked origin: ${origin}`);
@@ -147,7 +164,8 @@ const loginLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
-    return req.ip || req.connection.remoteAddress;
+    const ip = req.ip || req.socket?.remoteAddress;
+    return ipKeyGenerator(ip || '0.0.0.0');
   },
   handler: (req, res) => {
     console.warn(`レート制限: ${req.ip} からの過剰なログイン試行`);
