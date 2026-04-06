@@ -2,6 +2,9 @@
 let currentStep = 'initial';
 let selectedFile = null;
 let cameraStream = null;
+/** Vercel 等サーバレスではセッションが共有されないため、API に毎回送る */
+let currentLendingBookId = null;
+let currentLendingStudentRecordId = null;
 
 // DOM要素の取得
 const elements = {
@@ -69,6 +72,8 @@ function setupEventListeners() {
 
 function resetToInitialState() {
     currentStep = 'initial';
+    currentLendingBookId = null;
+    currentLendingStudentRecordId = null;
     selectedFile = null;
     
     // カメラストリームを停止
@@ -335,6 +340,7 @@ async function handleBorrowStep1() {
         hideLoading();
         
         if (data.success) {
+            currentLendingBookId = (data.data && data.data.book && data.data.book.id) ? data.data.book.id : null;
             const buttons = [
                 { text: '<i class="fas fa-check"></i> 借りる', action: () => handleBorrowStep2('borrow') },
                 { text: '<i class="fas fa-times"></i> キャンセル', action: () => handleBorrowStep2('cancel'), class: 'btn-cancel' }
@@ -384,7 +390,7 @@ async function handleBorrowStep2(action) {
                 'Content-Type': 'application/json',
                 'X-CSRF-Token': csrfData.csrfToken
             },
-            body: JSON.stringify({ action: 'borrow' }),
+            body: JSON.stringify({ action: 'borrow', bookId: currentLendingBookId }),
             credentials: 'include'
         });
         
@@ -428,7 +434,7 @@ async function handleBorrowStep3() {
                 'Content-Type': 'application/json',
                 'X-CSRF-Token': csrfData.csrfToken
             },
-            body: JSON.stringify({ name: name }),
+            body: JSON.stringify({ name: name, bookId: currentLendingBookId }),
             credentials: 'include'
         });
         
@@ -436,6 +442,8 @@ async function handleBorrowStep3() {
         hideLoading();
         
         if (data.success) {
+            currentLendingStudentRecordId =
+                (data.data && data.data.student && data.data.student.recordId) ? data.data.student.recordId : null;
             const buttons = [
                 { text: '<i class="fas fa-check"></i> 同意', action: () => handleBorrowStep4('agree') },
                 { text: '<i class="fas fa-times"></i> キャンセル', action: () => handleBorrowStep4('cancel'), class: 'btn-cancel' }
@@ -477,7 +485,11 @@ async function handleBorrowStep4(action) {
                 'Content-Type': 'application/json',
                 'X-CSRF-Token': csrfData.csrfToken
             },
-            body: JSON.stringify({ action: 'agree' }),
+            body: JSON.stringify({
+                action: 'agree',
+                bookId: currentLendingBookId,
+                studentId: currentLendingStudentRecordId
+            }),
             credentials: 'include'
         });
         
@@ -526,7 +538,11 @@ async function handleBorrowStep5(action) {
                 'Content-Type': 'application/json',
                 'X-CSRF-Token': csrfData.csrfToken
             },
-            body: JSON.stringify({ action: 'agree' }),
+            body: JSON.stringify({
+                action: 'agree',
+                bookId: currentLendingBookId,
+                studentId: currentLendingStudentRecordId
+            }),
             credentials: 'include'
         });
         

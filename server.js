@@ -52,7 +52,7 @@ app.use((req, res, next) => {
     "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
     "img-src 'self' data: blob: https:",
     "font-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
-    "connect-src 'self' https://vision.googleapis.com https://*.supabase.co",
+    "connect-src 'self' https://vision.googleapis.com https://*.supabase.co https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'"
@@ -330,7 +330,7 @@ async function extractTextFromImage(base64Image) {
       {
         headers: {
           'Content-Type': 'application/json',
-          'Referer': 'http://localhost:3000' // APIキー制限対策
+          Referer: getGoogleApiReferrerHeader()
         }
       }
     );
@@ -667,14 +667,59 @@ app.get('/favicon.ico', (req, res) => {
 
 const fs = require('fs');
 
-// ログ書き込み用関数
+// ログ書き込み用関数（本番・Vercel ではローカルパスに書けないためスキップ）
 function writeDebugLog(payload) {
+  if (process.env.VERCEL === '1' || process.env.NODE_ENV === 'production') {
+    return;
+  }
   const logPath = '/Users/Ryo/book-lending-vision/.cursor/debug.log';
   try {
     fs.appendFileSync(logPath, JSON.stringify(payload) + '\n');
   } catch (e) {
     console.error('Logging failed:', e);
   }
+}
+
+/** Google API キーが「HTTP リファラー」制限のとき、本番では Vercel の URL を送る */
+function getGoogleApiReferrerHeader() {
+  if (process.env.GOOGLE_VISION_REFERER) {
+    return process.env.GOOGLE_VISION_REFERER;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}/`;
+  }
+  if (process.env.PUBLIC_APP_URL) {
+    const u = process.env.PUBLIC_APP_URL.trim();
+    return u.endsWith('/') ? u : `${u}/`;
+  }
+  return 'http://localhost:3000/';
+}
+
+/** Vercel サーバレスではセッションが共有されないため、bookId / studentId で DB から復元する */
+async function resolveLendingContext(req) {
+  const bookId = req.body?.bookId;
+  const studentId = req.body?.studentId;
+  let book = req.session.book || null;
+  let student = req.session.student || null;
+  if (bookId && typeof bookId === 'string') {
+    try {
+      const b = await sb.getBookById(bookId.trim());
+      if (b) book = b;
+    } catch (e) {
+      console.error('resolveLendingContext book:', e.message);
+    }
+  }
+  if (studentId && typeof studentId === 'string') {
+    try {
+      const s = await sb.getStudentById(studentId.trim());
+      if (s) student = s;
+    } catch (e) {
+      console.error('resolveLendingContext student:', e.message);
+    }
+  }
+  if (book) req.session.book = book;
+  if (student) req.session.student = student;
+  return { book, student };
 }
 
 // ステップ1: 書籍画像をアップロードして検索
@@ -857,7 +902,7 @@ app.post('/api/step1', uploadLimiter, upload.single('bookImage'), validateImageF
 });
 
 // ステップ2: 「借りる」ボタンを押した時の処理
-app.post('/api/step2', apiLimiter, verifyCsrfToken, (req, res) => {
+app.post('/api/step2', apiLimiter, verifyCsrfToken, async (req, res) => {
   try {
     const { action } = req.body;
 
@@ -870,7 +915,10 @@ app.post('/api/step2', apiLimiter, verifyCsrfToken, (req, res) => {
       });
     }
 
-    if (action === 'borrow' && req.session.book) {
+    const { book } = await resolveLendingContext(req);
+
+    if (action === 'borrow' && book) {
+      req.session.book = book;
       req.session.step = LENDING_STEPS.NAME_REQUEST;
       
       res.json({
@@ -902,7 +950,8 @@ app.post('/api/step3', apiLimiter, verifyCsrfToken, async (req, res) => {
   try {
     const { name } = req.body;
 
-    if (!req.session.book) {
+    const { book } = await resolveLendingContext(req);
+    if (!book) {
       return res.status(400).json({
         success: false,
         message: 'セッションが無効です。最初からやり直してください。'
@@ -944,6 +993,7 @@ app.post('/api/step3', apiLimiter, verifyCsrfToken, async (req, res) => {
     }
 
     // セッションに生徒情報を保存
+    req.session.book = book;
     req.session.student = student;
     req.session.step = LENDING_STEPS.CONFIRM_PERIOD;
 
@@ -957,7 +1007,8 @@ app.post('/api/step3', apiLimiter, verifyCsrfToken, async (req, res) => {
       data: {
         student: {
           name: student.fields.名前 || student.fields.Name,
-          studentId: student.fields.生徒ID || student.fields.StudentID
+          studentId: student.fields.生徒ID || student.fields.StudentID,
+          recordId: student.id
         },
         dueDate: formatDate(dueDate),
         step: LENDING_STEPS.CONFIRM_PERIOD,
@@ -975,7 +1026,7 @@ app.post('/api/step3', apiLimiter, verifyCsrfToken, async (req, res) => {
 });
 
 // ステップ4: 貸出期間に同意した時の処理
-app.post('/api/step4', apiLimiter, verifyCsrfToken, (req, res) => {
+app.post('/api/step4', apiLimiter, verifyCsrfToken, async (req, res) => {
   try {
     const { action } = req.body;
 
@@ -988,7 +1039,11 @@ app.post('/api/step4', apiLimiter, verifyCsrfToken, (req, res) => {
       });
     }
 
-    if (action === 'agree' && req.session.book && req.session.student) {
+    const { book, student } = await resolveLendingContext(req);
+
+    if (action === 'agree' && book && student) {
+      req.session.book = book;
+      req.session.student = student;
       req.session.step = LENDING_STEPS.SHOW_RULES;
       
       const rules = `📚 貸出ルール
@@ -1036,12 +1091,14 @@ app.post('/api/step5', apiLimiter, verifyCsrfToken, async (req, res) => {
       });
     }
 
-    if (action === 'agree' && req.session.book && req.session.student) {
+    const { book, student } = await resolveLendingContext(req);
+
+    if (action === 'agree' && book && student) {
       // 貸出レコードを作成
-      const loanRecord = await createLoanRecord(req.session.book, req.session.student);
-      
+      const loanRecord = await createLoanRecord(book, student);
+
       // 書籍ステータスを更新
-      await updateBookStatus(req.session.book);
+      await updateBookStatus(book);
 
       const today = new Date();
       const dueDate = new Date(today);

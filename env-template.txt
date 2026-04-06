@@ -1,5 +1,7 @@
 # Google Cloud Vision API設定
 GOOGLE_CLOUD_API_KEY=your_google_cloud_api_key_here
+# APIキーに「HTTP リファラー」制限がある場合、本番のトップ URL（末尾スラッシュ付き）を明示してもよい
+# GOOGLE_VISION_REFERER=https://あなたのアプリ.vercel.app/
 
 # Supabase（ダッシュボードの Project Settings → API）
 SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
