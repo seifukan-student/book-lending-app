@@ -4,6 +4,7 @@ const cors = require('cors');
 const path = require('path');
 const axios = require('axios');
 const session = require('express-session');
+const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const ipKeyGenerator = rateLimit.ipKeyGenerator;
 const crypto = require('crypto');
@@ -13,6 +14,11 @@ const sb = require('./lib/supabase-data');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// リバースプロキシ（Vercel 等）越しの HTTPS / Cookie を正しく扱う
+app.set('trust proxy', 1);
+
+app.use(cookieParser());
 
 // セッション設定
 app.use(session({
@@ -200,7 +206,7 @@ app.use(express.static('public'));
 
 // CSRFトークン取得エンドポイント
 app.get('/api/csrf-token', (req, res) => {
-  const token = generateCsrfToken(req);
+  const token = generateCsrfToken(req, res);
   res.json({ csrfToken: token });
 });
 
@@ -429,12 +435,40 @@ function validateInput(input, type = 'string', options = {}) {
   return input.trim();
 }
 
-// CSRFトークン生成・検証関数
-function generateCsrfToken(req) {
-  if (!req.session.csrfToken) {
-    req.session.csrfToken = crypto.randomBytes(32).toString('hex');
+// CSRF: サーバレス（Vercel）ではメモリセッションが共有されないため、Cookie + ヘッダのダブルサブミットで検証する
+const CSRF_COOKIE_NAME = 'csrf_token';
+const CSRF_TOKEN_HEX_LEN = 64;
+
+function csrfCookieOptions() {
+  const prodLike = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
+  return {
+    httpOnly: false,
+    secure: prodLike,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 1000 * 60 * 60 * 24
+  };
+}
+
+function generateCsrfToken(req, res) {
+  const existing = req.cookies && req.cookies[CSRF_COOKIE_NAME];
+  const token =
+    existing && typeof existing === 'string' && /^[a-f0-9]{64}$/i.test(existing)
+      ? existing
+      : crypto.randomBytes(32).toString('hex');
+  res.cookie(CSRF_COOKIE_NAME, token, csrfCookieOptions());
+  return token;
+}
+
+function csrfTokensEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) {
+    return false;
   }
-  return req.session.csrfToken;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
+  } catch {
+    return false;
+  }
 }
 
 function verifyCsrfToken(req, res, next) {
@@ -442,17 +476,25 @@ function verifyCsrfToken(req, res, next) {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     return next();
   }
-  
-  const token = req.headers['x-csrf-token'] || req.body.csrfToken;
-  const sessionToken = req.session.csrfToken;
-  
-  if (!token || !sessionToken || token !== sessionToken) {
+
+  const headerToken = req.headers['x-csrf-token'] || req.body?.csrfToken;
+  const cookieToken = req.cookies && req.cookies[CSRF_COOKIE_NAME];
+
+  if (
+    !headerToken ||
+    !cookieToken ||
+    typeof headerToken !== 'string' ||
+    typeof cookieToken !== 'string' ||
+    headerToken.length !== CSRF_TOKEN_HEX_LEN ||
+    cookieToken.length !== CSRF_TOKEN_HEX_LEN ||
+    !csrfTokensEqual(headerToken, cookieToken)
+  ) {
     return res.status(403).json({
       success: false,
       message: 'CSRFトークンが無効です。ページを再読み込みしてください。'
     });
   }
-  
+
   next();
 }
 
@@ -1597,8 +1639,8 @@ app.post('/api/admin/login', loginLimiter, (req, res) => {
         
         req.session.isAdmin = true;
         req.session.loginTime = Date.now();
-        generateCsrfToken(req); // CSRFトークンを生成
-        
+        generateCsrfToken(req, res); // Cookie ベース CSRF（サーバレス対応）
+
         console.log('✅ 管理者認証成功（セッション再生成済み）');
         res.json({ success: true, message: '認証成功' });
       });
