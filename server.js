@@ -3,8 +3,7 @@ const multer = require('multer');
 const cors = require('cors');
 const path = require('path');
 const axios = require('axios');
-const session = require('express-session');
-const cookieParser = require('cookie-parser');
+const cookieSession = require('cookie-session');
 const rateLimit = require('express-rate-limit');
 const ipKeyGenerator = rateLimit.ipKeyGenerator;
 const crypto = require('crypto');
@@ -18,24 +17,19 @@ const PORT = process.env.PORT || 3000;
 // リバースプロキシ（Vercel 等）越しの HTTPS / Cookie を正しく扱う
 app.set('trust proxy', 1);
 
-app.use(cookieParser());
-
-// セッション設定
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'book-lending-secret-key-change-in-prod', // 環境変数で上書き可能に
-  resave: false,
-  saveUninitialized: false, // セキュリティ向上: 初期化されていないセッションは保存しない
-  name: 'sessionId', // デフォルトのconnect.sidを変更
-  cookie: { 
-    secure: process.env.NODE_ENV === 'production', // 本番環境ではtrue
-    httpOnly: true, // XSS対策: クライアントスクリプトからCookieへのアクセスを防止
-    maxAge: 1000 * 60 * 60 * 24,
-    sameSite: 'strict' // CSRF対策にも有効
-  },
-  // セッションID生成関数（セッション固定攻撃対策）
-  genid: function(req) {
-    return crypto.randomBytes(16).toString('hex');
-  }
+// cookie-session: セッションデータをブラウザ Cookie に格納（Vercel サーバレス対応）
+const SESSION_KEYS = [
+  process.env.SESSION_SECRET || 'book-lending-secret-key-change-in-prod',
+  process.env.SESSION_SECRET_OLD || 'old-key-for-rotation'
+];
+app.use(cookieSession({
+  name: 'session',
+  keys: SESSION_KEYS,
+  maxAge: 24 * 60 * 60 * 1000,
+  secure: process.env.NODE_ENV === 'production' || process.env.VERCEL === '1',
+  httpOnly: true,
+  sameSite: 'lax',
+  overwrite: true
 }));
 
 // セキュリティヘッダーの設定
@@ -206,7 +200,7 @@ app.use(express.static('public'));
 
 // CSRFトークン取得エンドポイント
 app.get('/api/csrf-token', (req, res) => {
-  const token = generateCsrfToken(req, res);
+  const token = generateCsrfToken(req);
   res.json({ csrfToken: token });
 });
 
@@ -435,66 +429,26 @@ function validateInput(input, type = 'string', options = {}) {
   return input.trim();
 }
 
-// CSRF: サーバレス（Vercel）ではメモリセッションが共有されないため、Cookie + ヘッダのダブルサブミットで検証する
-const CSRF_COOKIE_NAME = 'csrf_token';
-const CSRF_TOKEN_HEX_LEN = 64;
-
-function csrfCookieOptions() {
-  const prodLike = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
-  return {
-    httpOnly: false,
-    secure: prodLike,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 1000 * 60 * 60 * 24
-  };
-}
-
-function generateCsrfToken(req, res) {
-  const existing = req.cookies && req.cookies[CSRF_COOKIE_NAME];
-  const token =
-    existing && typeof existing === 'string' && /^[a-f0-9]{64}$/i.test(existing)
-      ? existing
-      : crypto.randomBytes(32).toString('hex');
-  res.cookie(CSRF_COOKIE_NAME, token, csrfCookieOptions());
-  return token;
-}
-
-function csrfTokensEqual(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) {
-    return false;
+// CSRF: cookie-session にトークンを保存（Vercel サーバレス対応 - Cookie に入るので共有不要）
+function generateCsrfToken(req) {
+  if (!req.session.csrfToken) {
+    req.session.csrfToken = crypto.randomBytes(32).toString('hex');
   }
-  try {
-    return crypto.timingSafeEqual(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
-  } catch {
-    return false;
-  }
+  return req.session.csrfToken;
 }
 
 function verifyCsrfToken(req, res, next) {
-  // GETリクエストは除外
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     return next();
   }
-
-  const headerToken = req.headers['x-csrf-token'] || req.body?.csrfToken;
-  const cookieToken = req.cookies && req.cookies[CSRF_COOKIE_NAME];
-
-  if (
-    !headerToken ||
-    !cookieToken ||
-    typeof headerToken !== 'string' ||
-    typeof cookieToken !== 'string' ||
-    headerToken.length !== CSRF_TOKEN_HEX_LEN ||
-    cookieToken.length !== CSRF_TOKEN_HEX_LEN ||
-    !csrfTokensEqual(headerToken, cookieToken)
-  ) {
+  const token = req.headers['x-csrf-token'] || req.body?.csrfToken;
+  const sessionToken = req.session && req.session.csrfToken;
+  if (!token || !sessionToken || token !== sessionToken) {
     return res.status(403).json({
       success: false,
       message: 'CSRFトークンが無効です。ページを再読み込みしてください。'
     });
   }
-
   next();
 }
 
@@ -907,7 +861,7 @@ app.post('/api/step2', apiLimiter, verifyCsrfToken, async (req, res) => {
     const { action } = req.body;
 
     if (action === 'cancel') {
-      req.session.destroy();
+      req.session = {};
       return res.json({
         success: true,
         message: 'キャンセルしました。',
@@ -1031,7 +985,7 @@ app.post('/api/step4', apiLimiter, verifyCsrfToken, async (req, res) => {
     const { action } = req.body;
 
     if (action === 'cancel') {
-      req.session.destroy();
+      req.session = {};
       return res.json({
         success: true,
         message: 'キャンセルしました。',
@@ -1083,7 +1037,7 @@ app.post('/api/step5', apiLimiter, verifyCsrfToken, async (req, res) => {
     const { action } = req.body;
 
     if (action === 'cancel') {
-      req.session.destroy();
+      req.session = {};
       return res.json({
         success: true,
         message: 'キャンセルしました。',
@@ -1107,7 +1061,7 @@ app.post('/api/step5', apiLimiter, verifyCsrfToken, async (req, res) => {
       const finalMessage = `🫡ご利用ありがとうございます。返却期限は【${formatDate(dueDate)}】です`;
 
       // セッションをクリア
-      req.session.destroy();
+      req.session = {};
 
       res.json({
         success: true,
@@ -1139,7 +1093,7 @@ app.post('/api/step5', apiLimiter, verifyCsrfToken, async (req, res) => {
 
 // セッションリセット
 app.post('/api/reset', apiLimiter, verifyCsrfToken, (req, res) => {
-  req.session.destroy();
+  req.session = {};
   res.json({
     success: true,
     message: 'セッションをリセットしました。',
@@ -1421,7 +1375,7 @@ app.post('/api/return-step2', apiLimiter, verifyCsrfToken, (req, res) => {
     const { action } = req.body;
 
     if (action === 'cancel') {
-      req.session.destroy();
+      req.session = {};
       return res.json({
         success: true,
         message: 'キャンセルしました。',
@@ -1551,7 +1505,7 @@ app.post('/api/return-step4', apiLimiter, verifyCsrfToken, async (req, res) => {
     const { action } = req.body;
 
     if (action === 'cancel') {
-      req.session.destroy();
+      req.session = {};
       return res.json({
         success: true,
         message: 'キャンセルしました。',
@@ -1570,7 +1524,7 @@ app.post('/api/return-step4', apiLimiter, verifyCsrfToken, async (req, res) => {
         const finalMessage = `✅返却処理が完了しました。ありがとうございました。`;
 
         // セッションをクリア
-        req.session.destroy();
+        req.session = {};
 
         res.json({
           success: true,
@@ -1586,7 +1540,7 @@ app.post('/api/return-step4', apiLimiter, verifyCsrfToken, async (req, res) => {
         console.error('   - エラータイプ:', returnError.constructor.name);
         
         // セッションをクリア
-        req.session.destroy();
+        req.session = {};
         
         // 422エラーの場合は詳細なメッセージを返す
         if (returnError.statusCode === 422) {
@@ -1684,23 +1638,14 @@ app.post('/api/admin/login', loginLimiter, (req, res) => {
     console.log('  - 入力されたパスワード長:', password ? password.length : 0, '文字');
     
     if (password === adminPassword) {
-      // セッションを再生成（セッション固定攻撃対策）
-      req.session.regenerate((err) => {
-        if (err) {
-          console.error('セッション再生成エラー:', err);
-          return res.status(500).json({ 
-            success: false, 
-            error: 'セッションエラーが発生しました' 
-          });
-        }
-        
-        req.session.isAdmin = true;
-        req.session.loginTime = Date.now();
-        generateCsrfToken(req, res); // Cookie ベース CSRF（サーバレス対応）
-
-        console.log('✅ 管理者認証成功（セッション再生成済み）');
-        res.json({ success: true, message: '認証成功' });
-      });
+      // cookie-session はサーバレス対応 - 新しいセッションを上書きするだけで OK
+      req.session = {
+        isAdmin: true,
+        loginTime: Date.now(),
+        csrfToken: crypto.randomBytes(32).toString('hex')
+      };
+      console.log('✅ 管理者認証成功');
+      res.json({ success: true, message: '認証成功' });
     } else {
       console.log('❌ 管理者認証失敗 (パスワード不一致)');
       res.status(401).json({ success: false, error: 'パスワードが正しくありません' });
