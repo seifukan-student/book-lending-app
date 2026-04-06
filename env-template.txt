@@ -1,0 +1,15 @@
+# Google Cloud Vision API設定
+GOOGLE_CLOUD_API_KEY=your_google_cloud_api_key_here
+
+# Supabase（ダッシュボードの Project Settings → API）
+SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_secret_key_here
+
+# テスト用データ
+TEST_STUDENT_ID=STU001
+TEST_IMAGE_BASE64=your_test_image_path_here
+
+# 管理者設定
+# ⚠️ セキュリティのため、必ずこのパスワードを変更してください
+# Vercelで変更した場合は、再デプロイが必要です
+ADMIN_PASSWORD=your_secure_admin_password_here

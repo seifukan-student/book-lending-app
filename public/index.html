@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>図書管理システム</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            font-family: 'Arial', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .main-container {
+            max-width: 600px;
+            width: 100%;
+            padding: 20px;
+            position: relative;
+        }
+
+        .admin-tool-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 25px;
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+            z-index: 1000;
+        }
+
+        .admin-tool-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.5);
+            color: white;
+            text-decoration: none;
+            transform: translateY(-2px);
+        }
+
+        .welcome-card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+        }
+
+        .welcome-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 20px;
+            text-align: center;
+        }
+
+        .welcome-header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+        
+        .welcome-header p {
+            font-size: 1.1rem;
+            margin: 0;
+            opacity: 0.9;
+        }
+
+        .selection-area {
+            padding: 40px;
+            text-align: center;
+        }
+        
+        .selection-title {
+            font-size: 1.5rem;
+            color: #333;
+            margin-bottom: 30px;
+            font-weight: 600;
+        }
+
+        .selection-buttons {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .selection-btn {
+            background: white;
+            border: 2px solid #e9ecef;
+            padding: 30px 40px;
+            border-radius: 15px;
+            text-decoration: none;
+            color: #333;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+            min-width: 180px;
+            cursor: pointer;
+            flex: 1;
+        }
+
+        .selection-btn:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            text-decoration: none;
+            color: #333;
+        }
+
+        .selection-btn.borrow {
+            border-color: #667eea;
+        }
+        
+        .selection-btn.borrow:hover {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: #667eea;
+        }
+
+        .selection-btn.return {
+            border-color: #28a745;
+        }
+
+        .selection-btn.return:hover {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+            border-color: #28a745;
+        }
+        
+        .selection-btn.extend {
+            border-color: #ffc107;
+        }
+
+        .selection-btn.extend:hover {
+            background: linear-gradient(135deg, #ffc107 0%, #ffb300 100%);
+            color: white;
+            border-color: #ffc107;
+        }
+        
+        .selection-btn i {
+            font-size: 3rem;
+        }
+        
+        .selection-btn h3 {
+            font-size: 1.3rem;
+            margin: 0;
+            font-weight: 600;
+        }
+        
+        .selection-btn p {
+            font-size: 0.9rem;
+            margin: 0;
+            opacity: 0.7;
+        }
+
+        .footer-text {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.8);
+            margin-top: 30px;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+            .selection-buttons {
+                flex-direction: column;
+                gap: 15px;
+        }
+
+            .selection-btn {
+                min-width: auto;
+                width: 100%;
+        }
+
+            .admin-tool-btn {
+                position: relative;
+                top: auto;
+                right: auto;
+                margin-bottom: 20px;
+                display: inline-block;
+            }
+        }
+        
+        @media (max-width: 576px) {
+            .main-container {
+                padding: 10px;
+            }
+            
+            .welcome-header {
+                padding: 30px 15px;
+        }
+
+            .welcome-header h1 {
+                font-size: 2rem;
+        }
+
+            .selection-area {
+                padding: 30px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <a href="/admin-login.html" class="admin-tool-btn">
+            <i class="fas fa-cog"></i> 管理者ツール
+        </a>
+        
+        <div class="welcome-card">
+            <div class="welcome-header">
+                <h1>📚 図書管理システム</h1>
+                <p>貸出・返却・延長申請をお選びください</p>
+                            </div>
+
+            <div class="selection-area">
+                <h2 class="selection-title">どちらをご希望ですか？</h2>
+                
+                <div class="selection-buttons">
+                    <a href="/borrow.html" class="selection-btn borrow">
+                        <i class="fas fa-book-open"></i>
+                        <h3>貸出</h3>
+                        <p>本を借りる</p>
+                    </a>
+
+                    <a href="/return.html" class="selection-btn return">
+                        <i class="fas fa-undo"></i>
+                        <h3>返却</h3>
+                        <p>本を返す</p>
+                    </a>
+
+                    <a href="/extend.html" class="selection-btn extend">
+                        <i class="fas fa-clock"></i>
+                        <h3>延長申請</h3>
+                        <p>返却期限を延長</p>
+                    </a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer-text">
+            <p>書籍の写真をアップロードしてご利用ください</p>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- DOMPurify for XSS protection -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+</body>
+</html> 
