@@ -1104,7 +1104,7 @@ app.post('/api/reset', apiLimiter, verifyCsrfToken, (req, res) => {
 // ========== 延長申請システムのAPIエンドポイント ==========
 
 // 延長ステップ1: 生徒の貸出一覧を取得
-app.post('/api/extend-step1', apiLimiter, verifyCsrfToken, async (req, res) => {
+app.post('/api/extend-step1', apiLimiter, async (req, res) => {
   try {
     const { name } = req.body;
 
@@ -1209,7 +1209,7 @@ app.post('/api/extend-step1', apiLimiter, verifyCsrfToken, async (req, res) => {
 });
 
 // 延長ステップ2: 延長処理を実行
-app.post('/api/extend-step2', apiLimiter, verifyCsrfToken, async (req, res) => {
+app.post('/api/extend-step2', apiLimiter, async (req, res) => {
   try {
     const { loanId, studentName } = req.body;
 
@@ -1286,7 +1286,7 @@ app.post('/api/extend-step2', apiLimiter, verifyCsrfToken, async (req, res) => {
 // ========== 返却システムのAPIエンドポイント ==========
 
 // 返却ステップ1: 書籍画像をアップロードして検索
-app.post('/api/return-step1', uploadLimiter, upload.single('bookImage'), validateImageFile, verifyCsrfToken, async (req, res) => {
+app.post('/api/return-step1', uploadLimiter, upload.single('bookImage'), validateImageFile, async (req, res) => {
   try {
     const imageFile = req.file;
 
@@ -1370,7 +1370,7 @@ app.post('/api/return-step1', uploadLimiter, upload.single('bookImage'), validat
 });
 
 // 返却ステップ2: 「返却する」ボタンを押した時の処理
-app.post('/api/return-step2', apiLimiter, verifyCsrfToken, (req, res) => {
+app.post('/api/return-step2', apiLimiter, async (req, res) => {
   try {
     const { action } = req.body;
 
@@ -1383,9 +1383,14 @@ app.post('/api/return-step2', apiLimiter, verifyCsrfToken, (req, res) => {
       });
     }
 
+    // cookie-session でも念のため bookId フォールバック
+    if (!req.session.returnBook && req.body.bookId) {
+      const b = await sb.getBookById(String(req.body.bookId));
+      if (b) req.session.returnBook = b;
+    }
+
     if (action === 'return' && req.session.returnBook) {
       req.session.returnStep = 'name_request';
-      
       res.json({
         success: true,
         message: '📝名前を入力してください',
@@ -1411,9 +1416,15 @@ app.post('/api/return-step2', apiLimiter, verifyCsrfToken, (req, res) => {
 });
 
 // 返却ステップ3: 名前を入力した時の処理
-app.post('/api/return-step3', apiLimiter, verifyCsrfToken, async (req, res) => {
+app.post('/api/return-step3', apiLimiter, async (req, res) => {
   try {
     const { name } = req.body;
+
+    // cookie-session フォールバック
+    if (!req.session.returnBook && req.body.bookId) {
+      const b = await sb.getBookById(String(req.body.bookId));
+      if (b) req.session.returnBook = b;
+    }
 
     if (!req.session.returnBook) {
       return res.status(400).json({
@@ -1456,7 +1467,7 @@ app.post('/api/return-step3', apiLimiter, verifyCsrfToken, async (req, res) => {
       });
     }
 
-    // セッションに生徒情報と貸出記録を保存
+    req.session.returnBook = req.session.returnBook;
     req.session.returnStudent = student;
     req.session.loanRecord = loanRecord;
     req.session.returnStep = 'check_deadline';
@@ -1500,7 +1511,7 @@ app.post('/api/return-step3', apiLimiter, verifyCsrfToken, async (req, res) => {
 });
 
 // 返却ステップ4: 返却確認
-app.post('/api/return-step4', apiLimiter, verifyCsrfToken, async (req, res) => {
+app.post('/api/return-step4', apiLimiter, async (req, res) => {
   try {
     const { action } = req.body;
 
@@ -1513,15 +1524,26 @@ app.post('/api/return-step4', apiLimiter, verifyCsrfToken, async (req, res) => {
       });
     }
 
+    // loanId フォールバック（cookie-session でも万全を期す）
+    if ((!req.session.loanRecord || !req.session.returnBook) && req.body.loanId) {
+      const lr = await sb.getLoanByIdForExtend(String(req.body.loanId));
+      if (lr) req.session.loanRecord = lr;
+    }
+    if (!req.session.returnBook && req.body.bookId) {
+      const b = await sb.getBookById(String(req.body.bookId));
+      if (b) req.session.returnBook = b;
+    }
+    if (!req.session.returnStudent && req.body.studentId) {
+      const s = await sb.getStudentById(String(req.body.studentId));
+      if (s) req.session.returnStudent = s;
+    }
+
     if (action === 'confirm' && req.session.returnBook && req.session.returnStudent && req.session.loanRecord) {
       try {
-        // 返却処理を実行
         await processReturn(req.session.loanRecord);
-        
-        // 書籍ステータスを「貸出可」に戻す
         await returnBookStatus(req.session.returnBook);
 
-        const finalMessage = `✅返却処理が完了しました。ありがとうございました。`;
+        const finalMessage = '✅返却処理が完了しました。ありがとうございました。';
 
         // セッションをクリア
         req.session = {};
