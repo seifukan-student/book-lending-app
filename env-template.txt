@@ -13,3 +13,7 @@ TEST_IMAGE_BASE64=your_test_image_path_here
 # ⚠️ セキュリティのため、必ずこのパスワードを変更してください
 # Vercelで変更した場合は、再デプロイが必要です
 ADMIN_PASSWORD=your_secure_admin_password_here
+
+# CORS（任意。Vercel では VERCEL_URL が自動で許可リストに入ります）
+# カスタムドメインだけ追記: カンマ区切りで複数可
+# ALLOWED_ORIGINS=https://example.com,https://www.example.com

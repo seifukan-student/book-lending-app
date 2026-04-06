@@ -86,9 +86,22 @@ const LENDING_STEPS = {
 };
 
 // CORS設定（セキュリティ向上）
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
-  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+function buildAllowedOrigins() {
+  const defaults = ['http://localhost:3000', 'http://127.0.0.1:3000'];
+  const fromEnv = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+    : [];
+  const vercelUrls = [];
+  for (const key of ['VERCEL_URL', 'VERCEL_BRANCH_URL']) {
+    const v = process.env[key];
+    if (!v) continue;
+    const host = v.replace(/^https?:\/\//i, '').split('/')[0];
+    vercelUrls.push(`https://${host}`);
+  }
+  return [...new Set([...defaults, ...fromEnv, ...vercelUrls])];
+}
+const allowedOrigins = buildAllowedOrigins();
+console.log(`🌐 CORS: ${allowedOrigins.length} origin(s) allowed`);
 
 app.use(cors({
   origin: function (origin, callback) {
